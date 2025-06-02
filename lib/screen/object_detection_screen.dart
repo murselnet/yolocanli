@@ -54,15 +54,34 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Uygulama arka plana geçtiğinde kamerayı kapat
-    if (state == AppLifecycleState.inactive) {
+    final CameraController? cameraController = _cameraController;
+
+    // Geçersiz bir kontrolcü varsa erken çık
+    if (cameraController == null || !cameraController.value.isInitialized) {
+      return;
+    }
+
+    // Uygulama arka plana geçtiğinde kamera ve timer kaynaklarını temizle
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
       _timer?.cancel();
-      _cameraController?.dispose();
+      _disposeResources();
     } else if (state == AppLifecycleState.resumed) {
-      // Uygulama geri geldiğinde kamerayı yeniden aç
-      if (_cameraController == null) {
-        _initializeCamera();
-      }
+      // Uygulama geri geldiğinde kamerayı yeniden başlat
+      _initializeCamera();
+    }
+  }
+
+  // Kaynakları güvenli bir şekilde temizle
+  Future<void> _disposeResources() async {
+    try {
+      _timer?.cancel();
+      await _cameraController?.dispose();
+      _cameraController = null;
+      _isCameraInitialized = false;
+    } catch (e) {
+      print('Error disposing resources: $e');
     }
   }
 
@@ -73,7 +92,35 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     _imageLabeler = ImageLabeler(options: options);
   }
 
+  // Güvenli bir şekilde kamera işlemlerini başlatma
+  Future<bool> _safeCameraOperation(Future<void> Function() operation) async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      if (mounted) {
+        setState(() {
+          _error = 'Kamera hazır değil. Lütfen uygulamayı yeniden başlatın.';
+        });
+      }
+      return false;
+    }
+
+    try {
+      await operation();
+      return true;
+    } catch (e) {
+      print('Camera operation error: $e');
+      if (mounted) {
+        setState(() {
+          _error = 'Kamera işlemi başarısız: $e';
+        });
+      }
+      return false;
+    }
+  }
+
   Future<void> _initializeCamera() async {
+    // Eğer halihazırda başlatılmış bir kamera varsa, önce onu temizleyelim
+    await _disposeResources();
+
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) {
@@ -109,33 +156,45 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
       await _cameraController!.initialize();
 
       // Flash modu ayarla
-      if (_flashEnabled) {
+      if (_flashEnabled &&
+          _cameraController != null &&
+          _cameraController!.value.isInitialized) {
         await _cameraController!.setFlashMode(FlashMode.torch);
       }
 
       // Sürekli akış yerine belirli aralıklarla fotoğraf çek
-      if (!_isPaused) {
+      if (!_isPaused && mounted) {
         _startImageProcessingTimer();
       }
 
-      setState(() {
-        _isCameraInitialized = true;
-      });
+      if (mounted) {
+        setState(() {
+          _isCameraInitialized = true;
+          _error = null; // Hata durumunu temizle
+        });
+      }
     } catch (e) {
       print('Error initializing camera: $e');
-      setState(() {
-        _error = 'Failed to initialize camera: ${e.toString()}';
-      });
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to initialize camera: ${e.toString()}';
+          _isCameraInitialized = false;
+        });
+      }
     }
   }
 
   void _startImageProcessingTimer() {
+    // Varolan timer'ı temizle
+    _timer?.cancel();
+
     // Her 0.8 saniyede bir görüntü işle
     _timer = Timer.periodic(const Duration(milliseconds: 800), (timer) {
       if (!_isProcessing &&
           _cameraController != null &&
           _cameraController!.value.isInitialized &&
-          !_isPaused) {
+          !_isPaused &&
+          mounted) {
         _captureAndProcessImage();
       }
     });
@@ -176,6 +235,11 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
 
   // Pause/Resume işlemi
   void _togglePause() {
+    // Kamera durumunu kontrol et
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      return;
+    }
+
     setState(() {
       _isPaused = !_isPaused;
       if (_isPaused) {
@@ -211,6 +275,12 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     _isProcessing = true;
 
     try {
+      // Kamera kontrolünü doğrula
+      if (_cameraController == null ||
+          !_cameraController!.value.isInitialized) {
+        throw CameraException('not_initialized', 'Kamera hazır değil');
+      }
+
       // Kameradan fotoğraf çek
       final XFile imageFile = await _cameraController!.takePicture();
 
@@ -230,13 +300,12 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
           _capturedImagePath = imageFile.path;
         });
       }
+
+      // Geçici dosyayı sil
+      await file.delete();
     } catch (e) {
       print('Error processing image: $e');
-      if (mounted) {
-        setState(() {
-          _error = null; // Hata varsa temizle, işlem devam etsin
-        });
-      }
+      // Sürekli hata göstermeyelim, sessizce işleme devam edelim
     } finally {
       _isProcessing = false;
     }
@@ -244,17 +313,31 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
 
   // Fotoğraf çek ve geçmişe kaydet
   Future<void> _takePhoto() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized)
+    // İşlem başladığında kameranın durumunu kontrol et
+    if (_cameraController == null ||
+        !_cameraController!.value.isInitialized ||
+        _isProcessing) {
+      if (mounted) {
+        ScaffoldMessenger.of(this.context).showSnackBar(const SnackBar(
+            content: Text(
+                'Kamera hazır değil veya işlem devam ediyor, lütfen bekleyin.')));
+      }
       return;
+    }
 
-    // Daha kaliteli fotoğraf için geçici olarak yüksek çözünürlüğe geç
-    final isHighRes = _currentResolution == ResolutionPreset.high;
+    _isProcessing = true; // İşlem sırasında diğer istekleri engelle
 
     try {
       // Kamerayı duraklatın
       final bool wasPaused = _isPaused;
       if (!wasPaused) {
         _togglePause();
+      }
+
+      // Kamera kontrolünü tekrar kontrol et
+      if (_cameraController == null ||
+          !_cameraController!.value.isInitialized) {
+        throw CameraException('not_initialized', 'Kamera hazır değil');
       }
 
       // Fotoğraf çek
@@ -268,24 +351,29 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
       final filename = '${DateTime.now().millisecondsSinceEpoch}.jpg';
       final savedImage = await file.copy('${appDir.path}/$filename');
 
+      // Kamera kontrolünü tekrar kontrol et
+      if (_imageLabeler == null) {
+        throw Exception('Image labeler not initialized');
+      }
+
       // Görüntüyü işle
       final inputImage = InputImage.fromFile(file);
       final labels = await _imageLabeler!.processImage(inputImage);
 
-      // Geçmişe ekle
-      setState(() {
-        _detectionHistory.add(DetectionResult(
-          labels: labels,
-          imagePath: savedImage.path,
-          timestamp: DateTime.now(),
-        ));
-
-        // Anlık sonucu da güncelle
-        _detectedLabels = labels;
-      });
-
-      // Mesaj göster - BuildContext sorununu çözmek için delayed kullanıyoruz
+      // Geçmişe ekle - sadece hala ekli isek
       if (mounted) {
+        setState(() {
+          _detectionHistory.add(DetectionResult(
+            labels: labels,
+            imagePath: savedImage.path,
+            timestamp: DateTime.now(),
+          ));
+
+          // Anlık sonucu da güncelle
+          _detectedLabels = labels;
+        });
+
+        // Mesaj göster
         ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(
             content: Text(
                 'Fotoğraf kaydedildi ve ${labels.length} nesne tespit edildi.')));
@@ -294,18 +382,21 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
       // Geçici dosyayı sil
       await file.delete();
 
-      // Kamerayı önceki durumuna getir
-      if (!wasPaused) {
+      // Kamerayı önceki durumuna getir - sadece hala ekli isek
+      if (mounted &&
+          !wasPaused &&
+          _cameraController != null &&
+          _cameraController!.value.isInitialized) {
         _togglePause();
       }
-
-      // Yüksek çözünürlükte çekim yapılmışsa, kamerayı yeniden başlatmaya gerek yok
     } catch (e) {
       print('Error taking photo: $e');
       if (mounted) {
         ScaffoldMessenger.of(this.context).showSnackBar(
             SnackBar(content: Text('Fotoğraf çekilirken hata oluştu: $e')));
       }
+    } finally {
+      _isProcessing = false;
     }
   }
 
@@ -437,10 +528,9 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _timer?.cancel();
-    _cameraController?.dispose();
+    _disposeResources();
     _imageLabeler?.close();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
