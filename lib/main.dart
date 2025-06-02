@@ -10,7 +10,7 @@ Future<void> main() async {
   // can be called before `runApp`
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Ensure portrait mode
+  // Ensure portrait mode only
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -38,11 +38,11 @@ class MyApp extends StatelessWidget {
         visualDensity: VisualDensity.adaptivePlatformDensity,
         // Define the default TextTheme to use the Poppins font
         textTheme: Theme.of(context).textTheme.apply(
-          fontFamily: 'Poppins',
-        ),
+              fontFamily: 'Poppins',
+            ),
         appBarTheme: AppBarTheme(
-           backgroundColor: Colors.blueGrey[900], // Dark AppBar background
-           foregroundColor: Colors.white, // White text/icons on AppBar
+          backgroundColor: Colors.blueGrey[900], // Dark AppBar background
+          foregroundColor: Colors.white, // White text/icons on AppBar
         ),
       ),
       home: const SplashScreen(),

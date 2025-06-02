@@ -11,7 +11,8 @@ class SplashScreen extends StatefulWidget {
   _SplashScreenState createState() => _SplashScreenState();
 }
 
-class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderStateMixin {
+class _SplashScreenState extends State<SplashScreen>
+    with SingleTickerProviderStateMixin {
   late AnimationController _controller;
   late Animation<double> _opacityAnimation;
 
@@ -29,10 +30,12 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
       vsync: this,
     );
 
-    _opacityAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(_controller);
+    _opacityAnimation =
+        Tween<double>(begin: 0.0, end: 1.0).animate(_controller);
 
     _controller.forward();
 
+    // Auto-navigate to object detection screen after 3 seconds
     Timer(const Duration(seconds: 3), () {
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (context) => ObjectDetectionScreen()),
@@ -51,6 +54,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
+          // Attractive gradient background
           gradient: LinearGradient(
             colors: [Colors.blue, Colors.teal],
             begin: Alignment.topCenter,
@@ -61,7 +65,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: <Widget>[
-              // App Logo
+              // App Logo with animation
               FadeTransition(
                 opacity: _opacityAnimation,
                 child: Image.asset(
@@ -71,7 +75,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                 ),
               ),
               const SizedBox(height: 20),
-              // App Title
+              // App Title with animation
               FadeTransition(
                 opacity: _opacityAnimation,
                 child: Text(
@@ -80,6 +84,17 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
                   ), // Use MyTextStyle
+                ),
+              ),
+              const SizedBox(height: 10),
+              // Subtitle with animation
+              FadeTransition(
+                opacity: _opacityAnimation,
+                child: Text(
+                  'Real-time Object Detection',
+                  style: MyTextStyle.size18.copyWith(
+                    color: Colors.white70,
+                  ),
                 ),
               ),
             ],
