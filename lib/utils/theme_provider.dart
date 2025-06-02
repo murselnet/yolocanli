@@ -62,10 +62,7 @@ class ThemeProvider extends ChangeNotifier {
       backgroundColor: Colors.blueGrey[900],
       foregroundColor: Colors.white,
     ),
-    cardTheme: CardTheme(
-      color: Colors.blueGrey[800],
-      elevation: 4,
-    ),
+    cardColor: Colors.blueGrey[800],
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         backgroundColor: Colors.blue,
@@ -91,10 +88,7 @@ class ThemeProvider extends ChangeNotifier {
       backgroundColor: Color(0xFF162A45),
       foregroundColor: Colors.white,
     ),
-    cardTheme: const CardTheme(
-      color: Color(0xFF162A45),
-      elevation: 4,
-    ),
+    cardColor: const Color(0xFF162A45),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         backgroundColor: Colors.indigo,
@@ -120,10 +114,7 @@ class ThemeProvider extends ChangeNotifier {
       backgroundColor: Colors.grey[850],
       foregroundColor: Colors.tealAccent,
     ),
-    cardTheme: CardTheme(
-      color: Colors.grey[800],
-      elevation: 4,
-    ),
+    cardColor: Colors.grey[800],
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         backgroundColor: Colors.teal,
@@ -149,10 +140,7 @@ class ThemeProvider extends ChangeNotifier {
       backgroundColor: Color(0xFF2D1B3D),
       foregroundColor: Colors.white,
     ),
-    cardTheme: const CardTheme(
-      color: Color(0xFF2D1B3D),
-      elevation: 4,
-    ),
+    cardColor: const Color(0xFF2D1B3D),
     elevatedButtonTheme: ElevatedButtonThemeData(
       style: ElevatedButton.styleFrom(
         backgroundColor: Colors.purple,
