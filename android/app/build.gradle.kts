@@ -24,10 +24,11 @@ android {
         applicationId = "com.example.myapp"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        minSdk = 21 // ML Kit ve kamera için minimum SDK 21 gerekli
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        multiDexEnabled = true // Çok sayıda metod içeren uygulamalar için gerekli
     }
 
     buildTypes {
@@ -35,8 +36,15 @@ android {
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
+            // Release optimizasyonları
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
+}
+
+dependencies {
+    implementation("androidx.multidex:multidex:2.0.1")
 }
 
 flutter {
