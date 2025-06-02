@@ -1,0 +1,4 @@
+yolocanli
+flutter build apk --release
+cd build/app/outputs/flutter-apk/
+npx serve . -p 8000
