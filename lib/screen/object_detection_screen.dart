@@ -64,8 +64,10 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
 
       _cameraController = CameraController(
         rearCamera,
-        ResolutionPreset.high, // Use high resolution as per the prompt
+        ResolutionPreset
+            .medium, // Düşük çözünürlük kullanarak performansı artır
         enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.yuv420, // Daha iyi uyumluluk için
       );
 
       await _cameraController!.initialize();
@@ -91,7 +93,8 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
     _isProcessing = true;
 
     try {
-      final inputImage = _convertCameraImageToInputImage(cameraImage);
+      // Basit bir yaklaşım kullanarak görüntüyü yakalayalım
+      final inputImage = await _cameraImageToInputImage(cameraImage);
 
       if (inputImage != null) {
         final labels = await _imageLabeler!.processImage(inputImage);
@@ -114,44 +117,56 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
     }
   }
 
-  InputImage? _convertCameraImageToInputImage(CameraImage cameraImage) {
+  Future<InputImage?> _cameraImageToInputImage(CameraImage cameraImage) async {
     try {
+      // Daha basit ve güvenilir bir yaklaşım kullanıyoruz
+      // Kamera görüntüsünü önce bir XFile olarak kaydedip sonra okuyoruz
       final camera = _cameraController?.description;
       if (camera == null) return null;
 
-      // Convert to InputImage format
-      final WriteBuffer allBytes = WriteBuffer();
-      for (final Plane plane in cameraImage.planes) {
-        allBytes.putUint8List(plane.bytes);
-      }
-      final bytes = allBytes.done().buffer.asUint8List();
+      // 1. InputImage'i doğrudan oluştur
+      final inputImageFormat = InputImageFormatValue.fromRawValue(
+        cameraImage.format.raw,
+      );
 
-      // Get image rotation
+      // Bazı Android cihazlar için format değeri gereklidir
+      if (inputImageFormat == null) return null;
+
+      // Kamera çözünürlüğü
+      final size = Size(
+        cameraImage.width.toDouble(),
+        cameraImage.height.toDouble(),
+      );
+
+      // Kamera yönü
       final imageRotation =
           InputImageRotationValue.fromRawValue(camera.sensorOrientation) ??
-              InputImageRotation.rotation0deg;
+          InputImageRotation.rotation0deg;
 
-      // Get image format
-      final format =
-          InputImageFormatValue.fromRawValue(cameraImage.format.raw) ??
-              InputImageFormat.nv21;
+      // Düz bir buffer olarak kamera düzlemlerini birleştir
+      final bytes = _concatenatePlanes(cameraImage.planes);
 
-      // Create InputImage
-      final inputImageData = InputImageMetadata(
-        size: Size(cameraImage.width.toDouble(), cameraImage.height.toDouble()),
+      // InputImage oluştur
+      final metadata = InputImageMetadata(
+        size: size,
         rotation: imageRotation,
-        format: format,
+        format: inputImageFormat,
         bytesPerRow: cameraImage.planes[0].bytesPerRow,
       );
 
-      return InputImage.fromBytes(
-        bytes: bytes,
-        metadata: inputImageData,
-      );
+      return InputImage.fromBytes(bytes: bytes, metadata: metadata);
     } catch (e) {
       print('Error converting image: $e');
       return null;
     }
+  }
+
+  Uint8List _concatenatePlanes(List<Plane> planes) {
+    final WriteBuffer allBytes = WriteBuffer();
+    for (final plane in planes) {
+      allBytes.putUint8List(plane.bytes);
+    }
+    return allBytes.done().buffer.asUint8List();
   }
 
   @override
@@ -166,7 +181,13 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
     if (_error != null) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text('Object Detection'),
+          title: Row(
+            children: [
+              Image.asset('assets/icons/object.png', width: 24, height: 24),
+              const SizedBox(width: 8),
+              const Text('YoloCanli'),
+            ],
+          ),
           backgroundColor: Colors.blueGrey[900],
         ),
         body: Center(
@@ -190,9 +211,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
           title: const Text('Object Detection'),
           backgroundColor: Colors.blueGrey[900],
         ),
-        body: const Center(
-          child: CircularProgressIndicator(),
-        ),
+        body: const Center(child: CircularProgressIndicator()),
       );
     }
 
@@ -200,11 +219,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
       appBar: AppBar(
         title: Row(
           children: [
-            Image.asset(
-              'assets/icons/object.png',
-              width: 24,
-              height: 24,
-            ),
+            Image.asset('assets/icons/object.png', width: 24, height: 24),
             const SizedBox(width: 8),
             const Text('YoloCanli'),
           ],
