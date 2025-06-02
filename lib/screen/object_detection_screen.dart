@@ -4,6 +4,7 @@ import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart';
 import 'dart:io';
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:myapp/utils/my_text_style.dart';
@@ -22,6 +23,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
   bool _isProcessing = false;
   List<ImageLabel> _detectedLabels = [];
   String? _error;
+  Timer? _timer;
 
   @override
   void initState() {
@@ -67,12 +69,13 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
         ResolutionPreset
             .medium, // Düşük çözünürlük kullanarak performansı artır
         enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.yuv420, // Daha iyi uyumluluk için
+        imageFormatGroup: ImageFormatGroup.jpeg, // JPEG formatını kullan
       );
 
       await _cameraController!.initialize();
 
-      _cameraController!.startImageStream(_processCameraImage);
+      // Sürekli akış yerine belirli aralıklarla fotoğraf çek
+      _startImageProcessingTimer();
 
       setState(() {
         _isCameraInitialized = true;
@@ -85,7 +88,18 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
     }
   }
 
-  Future<void> _processCameraImage(CameraImage cameraImage) async {
+  void _startImageProcessingTimer() {
+    // Her 1 saniyede bir görüntü işle
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!_isProcessing &&
+          _cameraController != null &&
+          _cameraController!.value.isInitialized) {
+        _captureAndProcessImage();
+      }
+    });
+  }
+
+  Future<void> _captureAndProcessImage() async {
     if (_isProcessing || _imageLabeler == null) {
       return;
     }
@@ -93,17 +107,25 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
     _isProcessing = true;
 
     try {
-      // Basit bir yaklaşım kullanarak görüntüyü yakalayalım
-      final inputImage = await _cameraImageToInputImage(cameraImage);
+      // Kameradan fotoğraf çek
+      final XFile imageFile = await _cameraController!.takePicture();
 
-      if (inputImage != null) {
-        final labels = await _imageLabeler!.processImage(inputImage);
+      // XFile'ı bir File'a dönüştür
+      final File file = File(imageFile.path);
 
-        if (mounted) {
-          setState(() {
-            _detectedLabels = labels;
-          });
-        }
+      // File'ı bir InputImage'a dönüştür
+      final inputImage = InputImage.fromFile(file);
+
+      // Görüntüyü işle
+      final labels = await _imageLabeler!.processImage(inputImage);
+
+      // Geçici dosyayı sil
+      await file.delete();
+
+      if (mounted) {
+        setState(() {
+          _detectedLabels = labels;
+        });
       }
     } catch (e) {
       print('Error processing image: $e');
@@ -117,60 +139,9 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
     }
   }
 
-  Future<InputImage?> _cameraImageToInputImage(CameraImage cameraImage) async {
-    try {
-      // Daha basit ve güvenilir bir yaklaşım kullanıyoruz
-      // Kamera görüntüsünü önce bir XFile olarak kaydedip sonra okuyoruz
-      final camera = _cameraController?.description;
-      if (camera == null) return null;
-
-      // 1. InputImage'i doğrudan oluştur
-      final inputImageFormat = InputImageFormatValue.fromRawValue(
-        cameraImage.format.raw,
-      );
-
-      // Bazı Android cihazlar için format değeri gereklidir
-      if (inputImageFormat == null) return null;
-
-      // Kamera çözünürlüğü
-      final size = Size(
-        cameraImage.width.toDouble(),
-        cameraImage.height.toDouble(),
-      );
-
-      // Kamera yönü
-      final imageRotation =
-          InputImageRotationValue.fromRawValue(camera.sensorOrientation) ??
-          InputImageRotation.rotation0deg;
-
-      // Düz bir buffer olarak kamera düzlemlerini birleştir
-      final bytes = _concatenatePlanes(cameraImage.planes);
-
-      // InputImage oluştur
-      final metadata = InputImageMetadata(
-        size: size,
-        rotation: imageRotation,
-        format: inputImageFormat,
-        bytesPerRow: cameraImage.planes[0].bytesPerRow,
-      );
-
-      return InputImage.fromBytes(bytes: bytes, metadata: metadata);
-    } catch (e) {
-      print('Error converting image: $e');
-      return null;
-    }
-  }
-
-  Uint8List _concatenatePlanes(List<Plane> planes) {
-    final WriteBuffer allBytes = WriteBuffer();
-    for (final plane in planes) {
-      allBytes.putUint8List(plane.bytes);
-    }
-    return allBytes.done().buffer.asUint8List();
-  }
-
   @override
   void dispose() {
+    _timer?.cancel();
     _cameraController?.dispose();
     _imageLabeler?.close();
     super.dispose();
@@ -208,7 +179,13 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
         !_cameraController!.value.isInitialized) {
       return Scaffold(
         appBar: AppBar(
-          title: const Text('Object Detection'),
+          title: Row(
+            children: [
+              Image.asset('assets/icons/object.png', width: 24, height: 24),
+              const SizedBox(width: 8),
+              const Text('YoloCanli'),
+            ],
+          ),
           backgroundColor: Colors.blueGrey[900],
         ),
         body: const Center(child: CircularProgressIndicator()),
@@ -257,6 +234,26 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
               ),
             ),
           ),
+          if (_isProcessing)
+            Positioned(
+              top: 16,
+              right: 16,
+              child: Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
