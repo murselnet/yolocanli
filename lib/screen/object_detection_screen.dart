@@ -9,6 +9,18 @@ import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:myapp/utils/my_text_style.dart';
 
+class DetectionResult {
+  final List<ImageLabel> labels;
+  final String imagePath;
+  final DateTime timestamp;
+
+  DetectionResult({
+    required this.labels,
+    required this.imagePath,
+    required this.timestamp,
+  });
+}
+
 class ObjectDetectionScreen extends StatefulWidget {
   const ObjectDetectionScreen({Key? key}) : super(key: key);
 
@@ -16,7 +28,8 @@ class ObjectDetectionScreen extends StatefulWidget {
   _ObjectDetectionScreenState createState() => _ObjectDetectionScreenState();
 }
 
-class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
+class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
+    with WidgetsBindingObserver {
   CameraController? _cameraController;
   ImageLabeler? _imageLabeler;
   bool _isCameraInitialized = false;
@@ -24,17 +37,39 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
   List<ImageLabel> _detectedLabels = [];
   String? _error;
   Timer? _timer;
+  double _confidenceThreshold = 0.6; // Güven eşiği
+  bool _flashEnabled = false;
+  ResolutionPreset _currentResolution = ResolutionPreset.medium;
+  List<DetectionResult> _detectionHistory = [];
+  bool _isPaused = false;
+  String? _capturedImagePath;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _initializeLabeler();
     _initializeCamera();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Uygulama arka plana geçtiğinde kamerayı kapat
+    if (state == AppLifecycleState.inactive) {
+      _timer?.cancel();
+      _cameraController?.dispose();
+    } else if (state == AppLifecycleState.resumed) {
+      // Uygulama geri geldiğinde kamerayı yeniden aç
+      if (_cameraController == null) {
+        _initializeCamera();
+      }
+    }
+  }
+
   Future<void> _initializeLabeler() async {
-    // Define the labeler options with confidence threshold of 0.5
-    final options = ImageLabelerOptions(confidenceThreshold: 0.5);
+    // Güven eşiği ile etiketleyici oluştur
+    final options =
+        ImageLabelerOptions(confidenceThreshold: _confidenceThreshold);
     _imageLabeler = ImageLabeler(options: options);
   }
 
@@ -66,16 +101,22 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
 
       _cameraController = CameraController(
         rearCamera,
-        ResolutionPreset
-            .medium, // Düşük çözünürlük kullanarak performansı artır
+        _currentResolution,
         enableAudio: false,
-        imageFormatGroup: ImageFormatGroup.jpeg, // JPEG formatını kullan
+        imageFormatGroup: ImageFormatGroup.jpeg,
       );
 
       await _cameraController!.initialize();
 
+      // Flash modu ayarla
+      if (_flashEnabled) {
+        await _cameraController!.setFlashMode(FlashMode.torch);
+      }
+
       // Sürekli akış yerine belirli aralıklarla fotoğraf çek
-      _startImageProcessingTimer();
+      if (!_isPaused) {
+        _startImageProcessingTimer();
+      }
 
       setState(() {
         _isCameraInitialized = true;
@@ -89,14 +130,77 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
   }
 
   void _startImageProcessingTimer() {
-    // Her 1 saniyede bir görüntü işle
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+    // Her 0.8 saniyede bir görüntü işle
+    _timer = Timer.periodic(const Duration(milliseconds: 800), (timer) {
       if (!_isProcessing &&
           _cameraController != null &&
-          _cameraController!.value.isInitialized) {
+          _cameraController!.value.isInitialized &&
+          !_isPaused) {
         _captureAndProcessImage();
       }
     });
+  }
+
+  Future<void> _updateCameraResolution(ResolutionPreset newResolution) async {
+    if (_currentResolution == newResolution) return;
+
+    // Timer'ı durdur
+    _timer?.cancel();
+
+    // Önceki controller'ı temizle
+    await _cameraController?.dispose();
+
+    setState(() {
+      _currentResolution = newResolution;
+      _isCameraInitialized = false;
+    });
+
+    // Kamera yeniden başlat
+    await _initializeCamera();
+  }
+
+  // Flash durumunu değiştir
+  Future<void> _toggleFlash() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized)
+      return;
+
+    try {
+      _flashEnabled = !_flashEnabled;
+      await _cameraController!
+          .setFlashMode(_flashEnabled ? FlashMode.torch : FlashMode.off);
+      setState(() {});
+    } catch (e) {
+      print('Error toggling flash: $e');
+    }
+  }
+
+  // Pause/Resume işlemi
+  void _togglePause() {
+    setState(() {
+      _isPaused = !_isPaused;
+      if (_isPaused) {
+        _timer?.cancel();
+      } else {
+        _startImageProcessingTimer();
+      }
+    });
+  }
+
+  // Güven eşiğini güncelle ve yeni etiketleyici oluştur
+  Future<void> _updateConfidenceThreshold(double newThreshold) async {
+    if (_confidenceThreshold == newThreshold) return;
+
+    setState(() {
+      _confidenceThreshold = newThreshold;
+    });
+
+    // Eski etiketleyiciyi kapat
+    await _imageLabeler?.close();
+
+    // Yeni etiketleyici oluştur
+    final options =
+        ImageLabelerOptions(confidenceThreshold: _confidenceThreshold);
+    _imageLabeler = ImageLabeler(options: options);
   }
 
   Future<void> _captureAndProcessImage() async {
@@ -119,19 +223,18 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
       // Görüntüyü işle
       final labels = await _imageLabeler!.processImage(inputImage);
 
-      // Geçici dosyayı sil
-      await file.delete();
-
       if (mounted) {
         setState(() {
           _detectedLabels = labels;
+          // Fotoğraf çekildi ve işlendi, _capturedImagePath'i güncelle (son resim)
+          _capturedImagePath = imageFile.path;
         });
       }
     } catch (e) {
       print('Error processing image: $e');
       if (mounted) {
         setState(() {
-          _error = 'Failed to process image: ${e.toString()}';
+          _error = null; // Hata varsa temizle, işlem devam etsin
         });
       }
     } finally {
@@ -139,8 +242,198 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
     }
   }
 
+  // Fotoğraf çek ve geçmişe kaydet
+  Future<void> _takePhoto() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized)
+      return;
+
+    // Daha kaliteli fotoğraf için geçici olarak yüksek çözünürlüğe geç
+    final isHighRes = _currentResolution == ResolutionPreset.high;
+
+    try {
+      // Kamerayı duraklatın
+      final bool wasPaused = _isPaused;
+      if (!wasPaused) {
+        _togglePause();
+      }
+
+      // Fotoğraf çek
+      final XFile imageFile = await _cameraController!.takePicture();
+
+      // XFile'ı bir File'a dönüştür
+      final File file = File(imageFile.path);
+
+      // Kalıcı depolama dizini alın
+      final appDir = await getApplicationDocumentsDirectory();
+      final filename = '${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final savedImage = await file.copy('${appDir.path}/$filename');
+
+      // Görüntüyü işle
+      final inputImage = InputImage.fromFile(file);
+      final labels = await _imageLabeler!.processImage(inputImage);
+
+      // Geçmişe ekle
+      setState(() {
+        _detectionHistory.add(DetectionResult(
+          labels: labels,
+          imagePath: savedImage.path,
+          timestamp: DateTime.now(),
+        ));
+
+        // Anlık sonucu da güncelle
+        _detectedLabels = labels;
+
+        // Mesaj göster
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(
+                'Fotoğraf kaydedildi ve ${labels.length} nesne tespit edildi.')));
+      });
+
+      // Geçici dosyayı sil
+      await file.delete();
+
+      // Kamerayı önceki durumuna getir
+      if (!wasPaused) {
+        _togglePause();
+      }
+
+      // Yüksek çözünürlükte çekim yapılmışsa, kamerayı yeniden başlatmaya gerek yok
+    } catch (e) {
+      print('Error taking photo: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Fotoğraf çekilirken hata oluştu: $e')));
+    }
+  }
+
+  // Geçmiş fotoğrafları göster
+  void _showHistoryDialog(BuildContext context) {
+    if (_detectionHistory.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Henüz kaydedilmiş bir fotoğraf yok.')));
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return Dialog(
+          child: Container(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                AppBar(
+                  title: const Text('Tespit Geçmişi'),
+                  automaticallyImplyLeading: false,
+                  actions: [
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(dialogContext),
+                    )
+                  ],
+                ),
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: _detectionHistory.length,
+                    itemBuilder: (context, index) {
+                      final item = _detectionHistory[
+                          _detectionHistory.length - 1 - index];
+                      return ListTile(
+                        leading: ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: Image.file(
+                            File(item.imagePath),
+                            width: 60,
+                            height: 60,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                        title: Text(
+                          '${item.labels.isNotEmpty ? item.labels.first.label : "Bilinmeyen nesne"}',
+                          style: MyTextStyle.size15
+                              .copyWith(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Text(
+                          '${item.labels.length} nesne - ${_formatDateTime(item.timestamp)}',
+                          style: MyTextStyle.size12,
+                        ),
+                        onTap: () {
+                          _showImageDetailsDialog(dialogContext, item);
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // Görüntü detaylarını göster
+  void _showImageDetailsDialog(BuildContext context, DetectionResult result) {
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return Dialog(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppBar(
+                title: Text(_formatDateTime(result.timestamp)),
+                automaticallyImplyLeading: false,
+                actions: [
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(dialogContext),
+                  )
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Image.file(
+                      File(result.imagePath),
+                      fit: BoxFit.cover,
+                      width: double.infinity,
+                    ),
+                    const SizedBox(height: 16),
+                    Text('Tespit Edilen Nesneler (${result.labels.length}):',
+                        style: MyTextStyle.size15
+                            .copyWith(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    ...result.labels.map((label) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 4.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(label.label, style: MyTextStyle.size15),
+                            Text(
+                                '${(label.confidence * 100).toStringAsFixed(1)}%',
+                                style: MyTextStyle.size15),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _timer?.cancel();
     _cameraController?.dispose();
     _imageLabeler?.close();
@@ -202,38 +495,160 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
           ],
         ),
         backgroundColor: Colors.blueGrey[900],
+        actions: [
+          // Fotoğraf geçmişi butonu
+          IconButton(
+            icon: const Icon(Icons.history),
+            onPressed: () => _showHistoryDialog(context),
+            tooltip: 'Geçmiş',
+          ),
+          // Flash butonu
+          IconButton(
+            icon: Icon(_flashEnabled ? Icons.flash_on : Icons.flash_off),
+            onPressed: _toggleFlash,
+            tooltip: 'Flash',
+          ),
+          // Ayarlar butonu
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () {
+              _showSettingsDialog(context);
+            },
+            tooltip: 'Settings',
+          ),
+        ],
       ),
       body: Stack(
         children: <Widget>[
           CameraPreview(_cameraController!),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: Container(
-              width: double.infinity,
-              color: Colors.black54, // Semi-transparent bottom sheet
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Detected Objects: ${_detectedLabels.length}',
-                    style: MyTextStyle.size18.copyWith(color: Colors.white),
-                  ),
-                  const SizedBox(height: 8),
-                  ..._detectedLabels.map((label) {
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 4.0),
-                      child: Text(
-                        '${label.label}: ${(label.confidence * 100).toStringAsFixed(1)}%',
-                        style: MyTextStyle.size15.copyWith(color: Colors.white),
-                      ),
-                    );
-                  }).toList(),
-                ],
+
+          // Pause/Play overlay
+          if (_isPaused)
+            Container(
+              color: Colors.black.withOpacity(0.5),
+              child: Center(
+                child: Icon(
+                  Icons.pause_circle_filled,
+                  size: 80,
+                  color: Colors.white.withOpacity(0.7),
+                ),
               ),
             ),
+
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Butonlar satırı
+                Container(
+                  color: Colors.black54,
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                    children: [
+                      // Pause/Resume butonu
+                      IconButton(
+                        icon: Icon(
+                          _isPaused ? Icons.play_arrow : Icons.pause,
+                          color: Colors.white,
+                          size: 28,
+                        ),
+                        onPressed: _togglePause,
+                      ),
+
+                      // Fotoğraf çekme butonu
+                      GestureDetector(
+                        onTap: _takePhoto,
+                        child: Container(
+                          height: 60,
+                          width: 60,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 3),
+                            color: Colors.white30,
+                          ),
+                          child: const Center(
+                            child: Icon(
+                              Icons.camera_alt,
+                              color: Colors.white,
+                              size: 30,
+                            ),
+                          ),
+                        ),
+                      ),
+
+                      // Boş, sadece düzen için
+                      const SizedBox(width: 40),
+                    ],
+                  ),
+                ),
+
+                // Tespit sonuçları
+                Container(
+                  width: double.infinity,
+                  color: Colors.black54, // Semi-transparent bottom sheet
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Detected Objects: ${_detectedLabels.length}',
+                            style: MyTextStyle.size18
+                                .copyWith(color: Colors.white),
+                          ),
+                          Text(
+                            'Confidence: ${(_confidenceThreshold * 100).toInt()}%',
+                            style: MyTextStyle.size12
+                                .copyWith(color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      ..._detectedLabels.map((label) {
+                        // Güven oranına göre renk değiştir
+                        final confidence = label.confidence;
+                        Color confidenceColor;
+                        if (confidence > 0.8) {
+                          confidenceColor = Colors.green;
+                        } else if (confidence > 0.6) {
+                          confidenceColor = Colors.yellow;
+                        } else {
+                          confidenceColor = Colors.orange;
+                        }
+
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 4.0),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  '${label.label}',
+                                  style: MyTextStyle.size15
+                                      .copyWith(color: Colors.white),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              Text(
+                                '${(label.confidence * 100).toStringAsFixed(1)}%',
+                                style: MyTextStyle.size15
+                                    .copyWith(color: confidenceColor),
+                              ),
+                            ],
+                          ),
+                        );
+                      }).toList(),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
+
           if (_isProcessing)
             Positioned(
               top: 16,
@@ -257,5 +672,94 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen> {
         ],
       ),
     );
+  }
+
+  // Ayarlar dialog penceresini göster
+  void _showSettingsDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text('Detection Settings'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Güven eşiği ayarı
+                  Text(
+                      'Confidence Threshold: ${(_confidenceThreshold * 100).toInt()}%',
+                      style: MyTextStyle.size15),
+                  Slider(
+                    value: _confidenceThreshold,
+                    min: 0.3,
+                    max: 0.9,
+                    divisions: 6,
+                    onChanged: (value) {
+                      setDialogState(() {
+                        _confidenceThreshold = value;
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  // Çözünürlük ayarı
+                  Text('Camera Resolution:', style: MyTextStyle.size15),
+                  const SizedBox(height: 8),
+                  DropdownButton<ResolutionPreset>(
+                    value: _currentResolution,
+                    isExpanded: true,
+                    items: [
+                      DropdownMenuItem(
+                        value: ResolutionPreset.low,
+                        child: Text('Low (faster)', style: MyTextStyle.size15),
+                      ),
+                      DropdownMenuItem(
+                        value: ResolutionPreset.medium,
+                        child: Text('Medium (balanced)',
+                            style: MyTextStyle.size15),
+                      ),
+                      DropdownMenuItem(
+                        value: ResolutionPreset.high,
+                        child: Text('High (more accurate)',
+                            style: MyTextStyle.size15),
+                      ),
+                    ],
+                    onChanged: (ResolutionPreset? value) {
+                      if (value != null) {
+                        setDialogState(() {
+                          _currentResolution = value;
+                        });
+                      }
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  child: const Text('Cancel'),
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                  },
+                ),
+                TextButton(
+                  child: const Text('Apply'),
+                  onPressed: () {
+                    _updateConfidenceThreshold(_confidenceThreshold);
+                    _updateCameraResolution(_currentResolution);
+                    Navigator.of(context).pop();
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // Tarih formatını düzenle
+  String _formatDateTime(DateTime dateTime) {
+    return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
   }
 }
