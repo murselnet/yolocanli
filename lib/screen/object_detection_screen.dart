@@ -319,8 +319,13 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
         _isProcessing) {
       if (mounted) {
         ScaffoldMessenger.of(this.context).showSnackBar(const SnackBar(
-            content: Text(
-                'Kamera hazır değil veya işlem devam ediyor, lütfen bekleyin.')));
+          content: Text(
+            'Kamera henüz hazırlanıyor, lütfen birkaç saniye bekleyin.',
+            style: TextStyle(fontSize: 16),
+          ),
+          backgroundColor: Colors.deepOrange,
+          duration: Duration(seconds: 2),
+        ));
       }
       return;
     }
@@ -328,6 +333,17 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     _isProcessing = true; // İşlem sırasında diğer istekleri engelle
 
     try {
+      // Kamerayı yeniden başlatmaya çalış
+      if (_cameraController == null ||
+          !_cameraController!.value.isInitialized) {
+        await _initializeCamera();
+        // Kamera hala hazır değilse hata fırlat
+        if (_cameraController == null ||
+            !_cameraController!.value.isInitialized) {
+          throw CameraException('not_initialized', 'Kamera hazırlanamadı');
+        }
+      }
+
       // Kamerayı duraklatın
       final bool wasPaused = _isPaused;
       if (!wasPaused) {
@@ -338,6 +354,17 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
       if (_cameraController == null ||
           !_cameraController!.value.isInitialized) {
         throw CameraException('not_initialized', 'Kamera hazır değil');
+      }
+
+      // Fotoğraf çekerken kullanıcıya bildir
+      if (mounted) {
+        ScaffoldMessenger.of(this.context).showSnackBar(const SnackBar(
+          content: Text(
+            'Fotoğraf çekiliyor...',
+            style: TextStyle(fontSize: 16),
+          ),
+          duration: Duration(milliseconds: 500),
+        ));
       }
 
       // Fotoğraf çek
@@ -375,8 +402,13 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
 
         // Mesaj göster
         ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(
-            content: Text(
-                'Fotoğraf kaydedildi ve ${labels.length} nesne tespit edildi.')));
+          content: Text(
+            'Fotoğraf kaydedildi (${labels.length} nesne algılandı)',
+            style: const TextStyle(fontSize: 16),
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 2),
+        ));
       }
 
       // Geçici dosyayı sil
@@ -392,8 +424,14 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     } catch (e) {
       print('Error taking photo: $e');
       if (mounted) {
-        ScaffoldMessenger.of(this.context).showSnackBar(
-            SnackBar(content: Text('Fotoğraf çekilirken hata oluştu: $e')));
+        ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(
+          content: Text(
+            'Fotoğraf çekilemedi: ${e.toString().split(':').first}',
+            style: const TextStyle(fontSize: 16),
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 3),
+        ));
       }
     } finally {
       _isProcessing = false;
@@ -776,68 +814,118 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Detection Settings'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Güven eşiği ayarı
-                  Text(
-                      'Confidence Threshold: ${(_confidenceThreshold * 100).toInt()}%',
-                      style: MyTextStyle.size15),
-                  Slider(
-                    value: _confidenceThreshold,
-                    min: 0.3,
-                    max: 0.9,
-                    divisions: 6,
-                    onChanged: (value) {
-                      setDialogState(() {
-                        _confidenceThreshold = value;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 16),
-                  // Çözünürlük ayarı
-                  Text('Camera Resolution:', style: MyTextStyle.size15),
-                  const SizedBox(height: 8),
-                  DropdownButton<ResolutionPreset>(
-                    value: _currentResolution,
-                    isExpanded: true,
-                    items: [
-                      DropdownMenuItem(
-                        value: ResolutionPreset.low,
-                        child: Text('Low (faster)', style: MyTextStyle.size15),
+              title: const Text(
+                'Nesne Algılama Ayarları',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 20,
+                ),
+              ),
+              backgroundColor: Colors.grey[850],
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Güven eşiği ayarı
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8.0),
+                      child: Text(
+                        'Güvenilirlik Eşiği: %${(_confidenceThreshold * 100).toInt()}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
-                      DropdownMenuItem(
-                        value: ResolutionPreset.medium,
-                        child: Text('Medium (balanced)',
-                            style: MyTextStyle.size15),
+                    ),
+                    Text(
+                      'Daha yüksek değer daha kesin, ancak daha az nesne algılar',
+                      style: TextStyle(
+                        color: Colors.grey[400],
+                        fontSize: 14,
                       ),
-                      DropdownMenuItem(
-                        value: ResolutionPreset.high,
-                        child: Text('High (more accurate)',
-                            style: MyTextStyle.size15),
-                      ),
-                    ],
-                    onChanged: (ResolutionPreset? value) {
-                      if (value != null) {
+                    ),
+                    Slider(
+                      value: _confidenceThreshold,
+                      min: 0.3,
+                      max: 0.9,
+                      divisions: 6,
+                      activeColor: Colors.blue,
+                      inactiveColor: Colors.blue.withOpacity(0.3),
+                      label: '${(_confidenceThreshold * 100).toInt()}%',
+                      onChanged: (value) {
                         setDialogState(() {
-                          _currentResolution = value;
+                          _confidenceThreshold = value;
                         });
-                      }
-                    },
-                  ),
-                ],
+                      },
+                    ),
+                    const SizedBox(height: 24),
+
+                    // Çözünürlük ayarı
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 8.0),
+                      child: Text(
+                        'Kamera Çözünürlüğü:',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      'Yüksek çözünürlük daha iyi algılama sağlar ancak daha yavaş çalışır',
+                      style: TextStyle(
+                        color: Colors.grey[400],
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Çözünürlük seçenekleri
+                    _buildResolutionOption(setDialogState, ResolutionPreset.low,
+                        'Düşük (hızlı)', 'Pil tasarrufu, daha akıcı deneyim'),
+                    const SizedBox(height: 8),
+                    _buildResolutionOption(
+                        setDialogState,
+                        ResolutionPreset.medium,
+                        'Orta (dengeli)',
+                        'Hız ve kalite dengesi'),
+                    const SizedBox(height: 8),
+                    _buildResolutionOption(
+                        setDialogState,
+                        ResolutionPreset.high,
+                        'Yüksek (daha kesin)',
+                        'En iyi algılama, daha yavaş işlem'),
+                  ],
+                ),
               ),
               actions: [
                 TextButton(
-                  child: const Text('Cancel'),
+                  child: const Text(
+                    'İptal',
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontSize: 16,
+                    ),
+                  ),
                   onPressed: () {
                     Navigator.of(context).pop();
                   },
                 ),
-                TextButton(
-                  child: const Text('Apply'),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text(
+                    'Uygula',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
                   onPressed: () {
                     _updateConfidenceThreshold(_confidenceThreshold);
                     _updateCameraResolution(_currentResolution);
@@ -849,6 +937,70 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
           },
         );
       },
+    );
+  }
+
+  // Çözünürlük seçeneği widget'ı
+  Widget _buildResolutionOption(Function setDialogState,
+      ResolutionPreset resolution, String title, String subtitle) {
+    bool isSelected = _currentResolution == resolution;
+
+    return GestureDetector(
+      onTap: () {
+        setDialogState(() {
+          _currentResolution = resolution;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue.withOpacity(0.2) : Colors.grey[800],
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? Colors.blue : Colors.transparent,
+            width: 2,
+          ),
+        ),
+        child: Row(
+          children: [
+            Radio<ResolutionPreset>(
+              value: resolution,
+              groupValue: _currentResolution,
+              onChanged: (ResolutionPreset? value) {
+                if (value != null) {
+                  setDialogState(() {
+                    _currentResolution = value;
+                  });
+                }
+              },
+              activeColor: Colors.blue,
+            ),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 16,
+                      fontWeight:
+                          isSelected ? FontWeight.bold : FontWeight.normal,
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    style: TextStyle(
+                      color: Colors.grey[400],
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
