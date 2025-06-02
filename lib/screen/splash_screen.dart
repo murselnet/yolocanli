@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'dart:async';
 import 'package:myapp/screen/object_detection_screen.dart';
 import 'package:myapp/utils/my_text_style.dart'; // Import MyTextStyle
+import 'package:myapp/utils/app_localizations.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({Key? key}) : super(key: key);
@@ -38,7 +39,7 @@ class _SplashScreenState extends State<SplashScreen>
     // Auto-navigate to object detection screen after 3 seconds
     Timer(const Duration(seconds: 3), () {
       Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (context) => ObjectDetectionScreen()),
+        MaterialPageRoute(builder: (context) => const ObjectDetectionScreen()),
       );
     });
   }
@@ -51,6 +52,8 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
+    final appLocalizations = AppLocalizations.of(context);
+
     return Scaffold(
       body: Container(
         decoration: const BoxDecoration(
@@ -79,7 +82,7 @@ class _SplashScreenState extends State<SplashScreen>
               FadeTransition(
                 opacity: _opacityAnimation,
                 child: Text(
-                  'YoloCanli', // Replace with your app name
+                  appLocalizations.appName,
                   style: MyTextStyle.size32.copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
@@ -91,7 +94,7 @@ class _SplashScreenState extends State<SplashScreen>
               FadeTransition(
                 opacity: _opacityAnimation,
                 child: Text(
-                  'Real-time Object Detection',
+                  appLocalizations.subtitle,
                   style: MyTextStyle.size18.copyWith(
                     color: Colors.white70,
                   ),

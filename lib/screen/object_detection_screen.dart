@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
-import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
+import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart'
+    hide InputImageRotation;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path_lib;
 import 'dart:io';
@@ -8,16 +9,29 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
 import 'package:myapp/utils/my_text_style.dart';
+import 'package:myapp/utils/app_localizations.dart';
+import 'package:myapp/utils/bounding_box_painter.dart';
+import 'package:myapp/utils/object_detector.dart';
+import 'package:myapp/components/settings_dialog.dart';
+import 'package:provider/provider.dart';
+import 'package:myapp/utils/language_provider.dart';
+import 'package:myapp/utils/theme_provider.dart';
 
 class DetectionResult {
   final List<ImageLabel> labels;
+  final List<DetectedObject> detectedObjects;
   final String imagePath;
   final DateTime timestamp;
+  final Size? imageSize;
+  final InputImageRotation? rotation;
 
   DetectionResult({
     required this.labels,
+    this.detectedObjects = const [],
     required this.imagePath,
     required this.timestamp,
+    this.imageSize,
+    this.rotation,
   });
 }
 
@@ -32,23 +46,29 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     with WidgetsBindingObserver {
   CameraController? _cameraController;
   ImageLabeler? _imageLabeler;
+  ObjectDetector? _objectDetector;
   bool _isCameraInitialized = false;
   bool _isProcessing = false;
   List<ImageLabel> _detectedLabels = [];
+  List<DetectedObject> _detectedObjects = [];
   String? _error;
   Timer? _timer;
-  double _confidenceThreshold = 0.6; // Güven eşiği
+  double _confidenceThreshold = 0.6;
   bool _flashEnabled = false;
   ResolutionPreset _currentResolution = ResolutionPreset.medium;
-  List<DetectionResult> _detectionHistory = [];
+  final List<DetectionResult> _detectionHistory = [];
   bool _isPaused = false;
   String? _capturedImagePath;
+  Size? _imageSize;
+  InputImageRotation? _imageRotation;
+  bool _showBoundingBoxes = true;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initializeLabeler();
+    _initializeObjectDetector();
     _initializeCamera();
   }
 
@@ -56,24 +76,20 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
   void didChangeAppLifecycleState(AppLifecycleState state) {
     final CameraController? cameraController = _cameraController;
 
-    // Geçersiz bir kontrolcü varsa erken çık
     if (cameraController == null || !cameraController.value.isInitialized) {
       return;
     }
 
-    // Uygulama arka plana geçtiğinde kamera ve timer kaynaklarını temizle
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       _timer?.cancel();
       _disposeResources();
     } else if (state == AppLifecycleState.resumed) {
-      // Uygulama geri geldiğinde kamerayı yeniden başlat
       _initializeCamera();
     }
   }
 
-  // Kaynakları güvenli bir şekilde temizle
   Future<void> _disposeResources() async {
     try {
       _timer?.cancel();
@@ -86,18 +102,30 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
   }
 
   Future<void> _initializeLabeler() async {
-    // Güven eşiği ile etiketleyici oluştur
     final options =
         ImageLabelerOptions(confidenceThreshold: _confidenceThreshold);
     _imageLabeler = ImageLabeler(options: options);
   }
 
-  // Güvenli bir şekilde kamera işlemlerini başlatma
+  Future<void> _initializeObjectDetector() async {
+    try {
+      _objectDetector = await ObjectDetector.getInstance();
+    } catch (e) {
+      print('Error initializing object detector: $e');
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to initialize object detector: $e';
+        });
+      }
+    }
+  }
+
   Future<bool> _safeCameraOperation(Future<void> Function() operation) async {
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       if (mounted) {
+        final appLocalizations = AppLocalizations.of(context);
         setState(() {
-          _error = 'Kamera hazır değil. Lütfen uygulamayı yeniden başlatın.';
+          _error = appLocalizations.cameraNotReady;
         });
       }
       return false;
@@ -109,8 +137,9 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     } catch (e) {
       print('Camera operation error: $e');
       if (mounted) {
+        final appLocalizations = AppLocalizations.of(context);
         setState(() {
-          _error = 'Kamera işlemi başarısız: $e';
+          _error = '${appLocalizations.photoFailed}: $e';
         });
       }
       return false;
@@ -118,7 +147,6 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
   }
 
   Future<void> _initializeCamera() async {
-    // Eğer halihazırda başlatılmış bir kamera varsa, önce onu temizleyelim
     await _disposeResources();
 
     try {
@@ -130,7 +158,6 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
         return;
       }
 
-      // Find a rear camera
       CameraDescription? rearCamera;
       for (var camera in cameras) {
         if (camera.lensDirection == CameraLensDirection.back) {
@@ -155,14 +182,12 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
 
       await _cameraController!.initialize();
 
-      // Flash modu ayarla
       if (_flashEnabled &&
           _cameraController != null &&
           _cameraController!.value.isInitialized) {
         await _cameraController!.setFlashMode(FlashMode.torch);
       }
 
-      // Sürekli akış yerine belirli aralıklarla fotoğraf çek
       if (!_isPaused && mounted) {
         _startImageProcessingTimer();
       }
@@ -170,7 +195,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
       if (mounted) {
         setState(() {
           _isCameraInitialized = true;
-          _error = null; // Hata durumunu temizle
+          _error = null;
         });
       }
     } catch (e) {
@@ -185,10 +210,8 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
   }
 
   void _startImageProcessingTimer() {
-    // Varolan timer'ı temizle
     _timer?.cancel();
 
-    // Her 0.8 saniyede bir görüntü işle
     _timer = Timer.periodic(const Duration(milliseconds: 800), (timer) {
       if (!_isProcessing &&
           _cameraController != null &&
@@ -203,10 +226,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
   Future<void> _updateCameraResolution(ResolutionPreset newResolution) async {
     if (_currentResolution == newResolution) return;
 
-    // Timer'ı durdur
     _timer?.cancel();
-
-    // Önceki controller'ı temizle
     await _cameraController?.dispose();
 
     setState(() {
@@ -214,14 +234,13 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
       _isCameraInitialized = false;
     });
 
-    // Kamera yeniden başlat
     await _initializeCamera();
   }
 
-  // Flash durumunu değiştir
   Future<void> _toggleFlash() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized)
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
       return;
+    }
 
     try {
       _flashEnabled = !_flashEnabled;
@@ -233,9 +252,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     }
   }
 
-  // Pause/Resume işlemi
   void _togglePause() {
-    // Kamera durumunu kontrol et
     if (_cameraController == null || !_cameraController!.value.isInitialized) {
       return;
     }
@@ -250,7 +267,6 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     });
   }
 
-  // Güven eşiğini güncelle ve yeni etiketleyici oluştur
   Future<void> _updateConfidenceThreshold(double newThreshold) async {
     if (_confidenceThreshold == newThreshold) return;
 
@@ -258,10 +274,8 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
       _confidenceThreshold = newThreshold;
     });
 
-    // Eski etiketleyiciyi kapat
     await _imageLabeler?.close();
 
-    // Yeni etiketleyici oluştur
     final options =
         ImageLabelerOptions(confidenceThreshold: _confidenceThreshold);
     _imageLabeler = ImageLabeler(options: options);
@@ -275,135 +289,135 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     _isProcessing = true;
 
     try {
-      // Kamera kontrolünü doğrula
       if (_cameraController == null ||
           !_cameraController!.value.isInitialized) {
-        throw CameraException('not_initialized', 'Kamera hazır değil');
+        throw CameraException('not_initialized', 'Camera is not ready');
       }
 
-      // Kameradan fotoğraf çek
       final XFile imageFile = await _cameraController!.takePicture();
-
-      // XFile'ı bir File'a dönüştür
       final File file = File(imageFile.path);
-
-      // File'ı bir InputImage'a dönüştür
       final inputImage = InputImage.fromFile(file);
-
-      // Görüntüyü işle
       final labels = await _imageLabeler!.processImage(inputImage);
+
+      List<DetectedObject> objects = [];
+      if (_objectDetector != null) {
+        objects = await _objectDetector!.processImage(inputImage);
+        _imageSize = _objectDetector!.imageSize;
+        _imageRotation = _objectDetector!.rotation;
+      }
 
       if (mounted) {
         setState(() {
           _detectedLabels = labels;
-          // Fotoğraf çekildi ve işlendi, _capturedImagePath'i güncelle (son resim)
+          _detectedObjects = objects;
           _capturedImagePath = imageFile.path;
         });
       }
 
-      // Geçici dosyayı sil
       await file.delete();
     } catch (e) {
       print('Error processing image: $e');
-      // Sürekli hata göstermeyelim, sessizce işleme devam edelim
     } finally {
       _isProcessing = false;
     }
   }
 
-  // Fotoğraf çek ve geçmişe kaydet
   Future<void> _takePhoto() async {
-    // İşlem başladığında kameranın durumunu kontrol et
     if (_cameraController == null ||
         !_cameraController!.value.isInitialized ||
         _isProcessing) {
       if (mounted) {
-        ScaffoldMessenger.of(this.context).showSnackBar(const SnackBar(
+        final appLocalizations = AppLocalizations.of(context);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
-            'Kamera henüz hazırlanıyor, lütfen birkaç saniye bekleyin.',
-            style: TextStyle(fontSize: 16),
+            appLocalizations.cameraNotReady,
+            style: const TextStyle(fontSize: 16),
           ),
           backgroundColor: Colors.deepOrange,
-          duration: Duration(seconds: 2),
+          duration: const Duration(seconds: 2),
         ));
       }
       return;
     }
 
-    _isProcessing = true; // İşlem sırasında diğer istekleri engelle
+    _isProcessing = true;
 
     try {
-      // Kamerayı yeniden başlatmaya çalış
       if (_cameraController == null ||
           !_cameraController!.value.isInitialized) {
         await _initializeCamera();
-        // Kamera hala hazır değilse hata fırlat
         if (_cameraController == null ||
             !_cameraController!.value.isInitialized) {
-          throw CameraException('not_initialized', 'Kamera hazırlanamadı');
+          throw CameraException(
+              'not_initialized', 'Camera could not be initialized');
         }
       }
 
-      // Kamerayı duraklatın
       final bool wasPaused = _isPaused;
       if (!wasPaused) {
         _togglePause();
       }
 
-      // Kamera kontrolünü tekrar kontrol et
       if (_cameraController == null ||
           !_cameraController!.value.isInitialized) {
-        throw CameraException('not_initialized', 'Kamera hazır değil');
+        throw CameraException('not_initialized', 'Camera is not ready');
       }
 
-      // Fotoğraf çekerken kullanıcıya bildir
       if (mounted) {
-        ScaffoldMessenger.of(this.context).showSnackBar(const SnackBar(
+        final appLocalizations = AppLocalizations.of(context);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
-            'Fotoğraf çekiliyor...',
-            style: TextStyle(fontSize: 16),
+            appLocalizations.takingPhoto,
+            style: const TextStyle(fontSize: 16),
           ),
-          duration: Duration(milliseconds: 500),
+          duration: const Duration(milliseconds: 500),
         ));
       }
 
-      // Fotoğraf çek
       final XFile imageFile = await _cameraController!.takePicture();
-
-      // XFile'ı bir File'a dönüştür
       final File file = File(imageFile.path);
-
-      // Kalıcı depolama dizini alın
       final appDir = await getApplicationDocumentsDirectory();
       final filename = '${DateTime.now().millisecondsSinceEpoch}.jpg';
       final savedImage = await file.copy('${appDir.path}/$filename');
 
-      // Kamera kontrolünü tekrar kontrol et
       if (_imageLabeler == null) {
         throw Exception('Image labeler not initialized');
       }
 
-      // Görüntüyü işle
       final inputImage = InputImage.fromFile(file);
       final labels = await _imageLabeler!.processImage(inputImage);
 
-      // Geçmişe ekle - sadece hala ekli isek
+      List<DetectedObject> objects = [];
+      Size? imageSize;
+      InputImageRotation? rotation;
+
+      if (_objectDetector != null) {
+        objects = await _objectDetector!.processImage(inputImage);
+        imageSize = _objectDetector!.imageSize;
+        rotation = _objectDetector!.rotation;
+      }
+
       if (mounted) {
         setState(() {
           _detectionHistory.add(DetectionResult(
             labels: labels,
+            detectedObjects: objects,
             imagePath: savedImage.path,
             timestamp: DateTime.now(),
+            imageSize: imageSize,
+            rotation: rotation,
           ));
 
-          // Anlık sonucu da güncelle
           _detectedLabels = labels;
+          _detectedObjects = objects;
+          _imageSize = imageSize;
+          _imageRotation = rotation;
         });
 
-        // Mesaj göster
-        ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(
+        final appLocalizations = AppLocalizations.of(context);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
-            'Fotoğraf kaydedildi (${labels.length} nesne algılandı)',
+            '${appLocalizations.photoSaved} (${labels.length} ${appLocalizations.objectsDetected})',
             style: const TextStyle(fontSize: 16),
           ),
           backgroundColor: Colors.green,
@@ -411,10 +425,8 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
         ));
       }
 
-      // Geçici dosyayı sil
       await file.delete();
 
-      // Kamerayı önceki durumuna getir - sadece hala ekli isek
       if (mounted &&
           !wasPaused &&
           _cameraController != null &&
@@ -424,9 +436,10 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     } catch (e) {
       print('Error taking photo: $e');
       if (mounted) {
-        ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(
+        final appLocalizations = AppLocalizations.of(context);
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text(
-            'Fotoğraf çekilemedi: ${e.toString().split(':').first}',
+            '${appLocalizations.photoFailed}: ${e.toString().split(':').first}',
             style: const TextStyle(fontSize: 16),
           ),
           backgroundColor: Colors.red,
@@ -438,11 +451,12 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     }
   }
 
-  // Geçmiş fotoğrafları göster
   void _showHistoryDialog(BuildContext context) {
+    final appLocalizations = AppLocalizations.of(context);
+
     if (_detectionHistory.isEmpty) {
-      ScaffoldMessenger.of(this.context).showSnackBar(
-          const SnackBar(content: Text('Henüz kaydedilmiş bir fotoğraf yok.')));
+      ScaffoldMessenger.of(this.context)
+          .showSnackBar(SnackBar(content: Text(appLocalizations.noPhotos)));
       return;
     }
 
@@ -450,13 +464,13 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
       context: context,
       builder: (BuildContext dialogContext) {
         return Dialog(
-          child: Container(
+          child: SizedBox(
             width: double.maxFinite,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 AppBar(
-                  title: const Text('Tespit Geçmişi'),
+                  title: Text(appLocalizations.detectionHistory),
                   automaticallyImplyLeading: false,
                   actions: [
                     IconButton(
@@ -483,12 +497,14 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                           ),
                         ),
                         title: Text(
-                          '${item.labels.isNotEmpty ? item.labels.first.label : "Bilinmeyen nesne"}',
+                          item.labels.isNotEmpty
+                              ? item.labels.first.label
+                              : appLocalizations.unknownObject,
                           style: MyTextStyle.size15
                               .copyWith(fontWeight: FontWeight.bold),
                         ),
                         subtitle: Text(
-                          '${item.labels.length} nesne - ${_formatDateTime(item.timestamp)}',
+                          '${item.labels.length} ${appLocalizations.objects} - ${_formatDateTime(item.timestamp)}',
                           style: MyTextStyle.size12,
                         ),
                         onTap: () {
@@ -506,8 +522,9 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     );
   }
 
-  // Görüntü detaylarını göster
   void _showImageDetailsDialog(BuildContext context, DetectionResult result) {
+    final appLocalizations = AppLocalizations.of(context);
+
     showDialog(
       context: context,
       builder: (BuildContext dialogContext) {
@@ -530,13 +547,40 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Image.file(
-                      File(result.imagePath),
-                      fit: BoxFit.cover,
-                      width: double.infinity,
+                    // Stack to overlay the image with bounding boxes
+                    Stack(
+                      children: [
+                        // The image
+                        Image.file(
+                          File(result.imagePath),
+                          fit: BoxFit.cover,
+                          width: double.infinity,
+                        ),
+
+                        // Bounding boxes if available
+                        if (_showBoundingBoxes &&
+                            result.detectedObjects.isNotEmpty &&
+                            result.imageSize != null &&
+                            result.rotation != null)
+                          CustomPaint(
+                            painter: BoundingBoxPainter(
+                              objects: result.detectedObjects,
+                              absoluteImageSize: result.imageSize!,
+                              rotation: result.rotation!,
+                            ),
+                            child: SizedBox(
+                              width: double.infinity,
+                              height: MediaQuery.of(dialogContext).size.width *
+                                  result.imageSize!.height /
+                                  result.imageSize!.width,
+                            ),
+                          ),
+                      ],
                     ),
+
                     const SizedBox(height: 16),
-                    Text('Tespit Edilen Nesneler (${result.labels.length}):',
+                    Text(
+                        '${appLocalizations.detectedObjects}: ${result.labels.length}',
                         style: MyTextStyle.size15
                             .copyWith(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
@@ -548,8 +592,9 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                           children: [
                             Text(label.label, style: MyTextStyle.size15),
                             Text(
-                                '${(label.confidence * 100).toStringAsFixed(1)}%',
-                                style: MyTextStyle.size15),
+                              '${(label.confidence * 100).toStringAsFixed(1)}%',
+                              style: MyTextStyle.size15,
+                            ),
                           ],
                         ),
                       );
@@ -574,6 +619,8 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
 
   @override
   Widget build(BuildContext context) {
+    final appLocalizations = AppLocalizations.of(context);
+
     if (_error != null) {
       return Scaffold(
         appBar: AppBar(
@@ -581,10 +628,9 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
             children: [
               Image.asset('assets/icons/object.png', width: 24, height: 24),
               const SizedBox(width: 8),
-              const Text('YoloCanli'),
+              Text(appLocalizations.appName),
             ],
           ),
-          backgroundColor: Colors.blueGrey[900],
         ),
         body: Center(
           child: Padding(
@@ -608,10 +654,9 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
             children: [
               Image.asset('assets/icons/object.png', width: 24, height: 24),
               const SizedBox(width: 8),
-              const Text('YoloCanli'),
+              Text(appLocalizations.appName),
             ],
           ),
-          backgroundColor: Colors.blueGrey[900],
         ),
         body: const Center(child: CircularProgressIndicator()),
       );
@@ -623,38 +668,62 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
           children: [
             Image.asset('assets/icons/object.png', width: 24, height: 24),
             const SizedBox(width: 8),
-            const Text('YoloCanli'),
+            Text(appLocalizations.appName),
           ],
         ),
-        backgroundColor: Colors.blueGrey[900],
         actions: [
-          // Fotoğraf geçmişi butonu
+          // History button
           IconButton(
             icon: const Icon(Icons.history),
             onPressed: () => _showHistoryDialog(context),
-            tooltip: 'Geçmiş',
+            tooltip: appLocalizations.history,
           ),
-          // Flash butonu
+          // Flash button
           IconButton(
             icon: Icon(_flashEnabled ? Icons.flash_on : Icons.flash_off),
             onPressed: _toggleFlash,
-            tooltip: 'Flash',
+            tooltip: appLocalizations.flash,
           ),
-          // Ayarlar butonu
+          // Bounding box toggle
+          IconButton(
+            icon: Icon(
+                _showBoundingBoxes ? Icons.border_all : Icons.border_clear),
+            onPressed: _toggleBoundingBoxes,
+            tooltip: 'Toggle Bounding Boxes',
+          ),
+          // Settings button
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: () {
               _showSettingsDialog(context);
             },
-            tooltip: 'Settings',
+            tooltip: appLocalizations.settings,
           ),
         ],
       ),
       body: Stack(
         children: <Widget>[
+          // Camera preview
           CameraPreview(_cameraController!),
 
-          // Pause/Play overlay
+          // Bounding box overlay for live detection
+          if (_showBoundingBoxes &&
+              _detectedObjects.isNotEmpty &&
+              _imageSize != null &&
+              _imageRotation != null)
+            CustomPaint(
+              painter: BoundingBoxPainter(
+                objects: _detectedObjects,
+                absoluteImageSize: _imageSize!,
+                rotation: _imageRotation!,
+              ),
+              child: SizedBox(
+                width: double.infinity,
+                height: double.infinity,
+              ),
+            ),
+
+          // Pause overlay
           if (_isPaused)
             Container(
               color: Colors.black.withOpacity(0.5),
@@ -667,19 +736,20 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
               ),
             ),
 
+          // Bottom control panel
           Align(
             alignment: Alignment.bottomCenter,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Butonlar satırı
+                // Control buttons
                 Container(
                   color: Colors.black54,
                   padding: const EdgeInsets.symmetric(vertical: 8.0),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      // Pause/Resume butonu
+                      // Pause/Resume button
                       IconButton(
                         icon: Icon(
                           _isPaused ? Icons.play_arrow : Icons.pause,
@@ -689,7 +759,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                         onPressed: _togglePause,
                       ),
 
-                      // Fotoğraf çekme butonu
+                      // Take photo button
                       GestureDetector(
                         onTap: _takePhoto,
                         child: Container(
@@ -710,16 +780,16 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                         ),
                       ),
 
-                      // Boş, sadece düzen için
+                      // Empty space for balance
                       const SizedBox(width: 40),
                     ],
                   ),
                 ),
 
-                // Tespit sonuçları
+                // Detection results panel
                 Container(
                   width: double.infinity,
-                  color: Colors.black54, // Semi-transparent bottom sheet
+                  color: Colors.black54,
                   padding: const EdgeInsets.all(16.0),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -729,12 +799,12 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            'Detected Objects: ${_detectedLabels.length}',
+                            '${appLocalizations.detectedObjects}: ${_detectedLabels.length}',
                             style: MyTextStyle.size18
                                 .copyWith(color: Colors.white),
                           ),
                           Text(
-                            'Confidence: ${(_confidenceThreshold * 100).toInt()}%',
+                            '${appLocalizations.confidence}: ${(_confidenceThreshold * 100).toInt()}%',
                             style: MyTextStyle.size12
                                 .copyWith(color: Colors.white70),
                           ),
@@ -742,7 +812,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                       ),
                       const SizedBox(height: 8),
                       ..._detectedLabels.map((label) {
-                        // Güven oranına göre renk değiştir
+                        // Color based on confidence
                         final confidence = label.confidence;
                         Color confidenceColor;
                         if (confidence > 0.8) {
@@ -759,7 +829,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                             children: [
                               Expanded(
                                 child: Text(
-                                  '${label.label}',
+                                  label.label,
                                   style: MyTextStyle.size15
                                       .copyWith(color: Colors.white),
                                   overflow: TextOverflow.ellipsis,
@@ -781,6 +851,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
             ),
           ),
 
+          // Processing indicator
           if (_isProcessing)
             Positioned(
               top: 16,
@@ -806,206 +877,22 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
     );
   }
 
-  // Ayarlar dialog penceresini göster
   void _showSettingsDialog(BuildContext context) {
     showDialog(
       context: context,
       builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text(
-                'Nesne Algılama Ayarları',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 20,
-                ),
-              ),
-              backgroundColor: Colors.grey[850],
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    // Güven eşiği ayarı
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8.0),
-                      child: Text(
-                        'Güvenilirlik Eşiği: %${(_confidenceThreshold * 100).toInt()}',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      'Daha yüksek değer daha kesin, ancak daha az nesne algılar',
-                      style: TextStyle(
-                        color: Colors.grey[400],
-                        fontSize: 14,
-                      ),
-                    ),
-                    Slider(
-                      value: _confidenceThreshold,
-                      min: 0.3,
-                      max: 0.9,
-                      divisions: 6,
-                      activeColor: Colors.blue,
-                      inactiveColor: Colors.blue.withOpacity(0.3),
-                      label: '${(_confidenceThreshold * 100).toInt()}%',
-                      onChanged: (value) {
-                        setDialogState(() {
-                          _confidenceThreshold = value;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 24),
-
-                    // Çözünürlük ayarı
-                    const Padding(
-                      padding: EdgeInsets.only(bottom: 8.0),
-                      child: Text(
-                        'Kamera Çözünürlüğü:',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      'Yüksek çözünürlük daha iyi algılama sağlar ancak daha yavaş çalışır',
-                      style: TextStyle(
-                        color: Colors.grey[400],
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Çözünürlük seçenekleri
-                    _buildResolutionOption(setDialogState, ResolutionPreset.low,
-                        'Düşük (hızlı)', 'Pil tasarrufu, daha akıcı deneyim'),
-                    const SizedBox(height: 8),
-                    _buildResolutionOption(
-                        setDialogState,
-                        ResolutionPreset.medium,
-                        'Orta (dengeli)',
-                        'Hız ve kalite dengesi'),
-                    const SizedBox(height: 8),
-                    _buildResolutionOption(
-                        setDialogState,
-                        ResolutionPreset.high,
-                        'Yüksek (daha kesin)',
-                        'En iyi algılama, daha yavaş işlem'),
-                  ],
-                ),
-              ),
-              actions: [
-                TextButton(
-                  child: const Text(
-                    'İptal',
-                    style: TextStyle(
-                      color: Colors.grey,
-                      fontSize: 16,
-                    ),
-                  ),
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                  },
-                ),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.blue,
-                    foregroundColor: Colors.white,
-                  ),
-                  child: const Text(
-                    'Uygula',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  onPressed: () {
-                    _updateConfidenceThreshold(_confidenceThreshold);
-                    _updateCameraResolution(_currentResolution);
-                    Navigator.of(context).pop();
-                  },
-                ),
-              ],
-            );
-          },
-        );
+        return const SettingsDialog();
       },
     );
   }
 
-  // Çözünürlük seçeneği widget'ı
-  Widget _buildResolutionOption(Function setDialogState,
-      ResolutionPreset resolution, String title, String subtitle) {
-    bool isSelected = _currentResolution == resolution;
-
-    return GestureDetector(
-      onTap: () {
-        setDialogState(() {
-          _currentResolution = resolution;
-        });
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.blue.withOpacity(0.2) : Colors.grey[800],
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: isSelected ? Colors.blue : Colors.transparent,
-            width: 2,
-          ),
-        ),
-        child: Row(
-          children: [
-            Radio<ResolutionPreset>(
-              value: resolution,
-              groupValue: _currentResolution,
-              onChanged: (ResolutionPreset? value) {
-                if (value != null) {
-                  setDialogState(() {
-                    _currentResolution = value;
-                  });
-                }
-              },
-              activeColor: Colors.blue,
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight:
-                          isSelected ? FontWeight.bold : FontWeight.normal,
-                    ),
-                  ),
-                  Text(
-                    subtitle,
-                    style: TextStyle(
-                      color: Colors.grey[400],
-                      fontSize: 12,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Tarih formatını düzenle
   String _formatDateTime(DateTime dateTime) {
     return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
+  }
+
+  void _toggleBoundingBoxes() {
+    setState(() {
+      _showBoundingBoxes = !_showBoundingBoxes;
+    });
   }
 }
