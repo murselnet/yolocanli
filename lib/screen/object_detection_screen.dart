@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart';
+import 'package:path/path.dart' as path_lib;
 import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
@@ -282,12 +282,14 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
 
         // Anlık sonucu da güncelle
         _detectedLabels = labels;
+      });
 
-        // Mesaj göster
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      // Mesaj göster - BuildContext sorununu çözmek için delayed kullanıyoruz
+      if (mounted) {
+        ScaffoldMessenger.of(this.context).showSnackBar(SnackBar(
             content: Text(
                 'Fotoğraf kaydedildi ve ${labels.length} nesne tespit edildi.')));
-      });
+      }
 
       // Geçici dosyayı sil
       await file.delete();
@@ -300,15 +302,17 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
       // Yüksek çözünürlükte çekim yapılmışsa, kamerayı yeniden başlatmaya gerek yok
     } catch (e) {
       print('Error taking photo: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Fotoğraf çekilirken hata oluştu: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(this.context).showSnackBar(
+            SnackBar(content: Text('Fotoğraf çekilirken hata oluştu: $e')));
+      }
     }
   }
 
   // Geçmiş fotoğrafları göster
   void _showHistoryDialog(BuildContext context) {
     if (_detectionHistory.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
+      ScaffoldMessenger.of(this.context).showSnackBar(
           const SnackBar(content: Text('Henüz kaydedilmiş bir fotoğraf yok.')));
       return;
     }
@@ -336,7 +340,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                   child: ListView.builder(
                     shrinkWrap: true,
                     itemCount: _detectionHistory.length,
-                    itemBuilder: (context, index) {
+                    itemBuilder: (BuildContext listContext, index) {
                       final item = _detectionHistory[
                           _detectionHistory.length - 1 - index];
                       return ListTile(
