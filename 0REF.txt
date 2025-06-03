@@ -14,3 +14,22 @@ Daha küçük bir APK oluşturmak için,
 sadece belirli bir mimariye odaklanabilirsiniz:
 
 flutter build apk --release --target-platform=android-arm64
+
+
+
+----------------------------------------------
+
+Aşağıdaki değişklikleri yap.
+
+android/app/build.gradle dosyasında com.example.myapp
+myapp > com.murselnet.yolocanli olarak değiştir
+
+YoloCanli > yolocanli olarak değiştir
+android/app/src/main/AndroidManifest.xml dosyasında android:label="YoloCanli"
+
+Değişiklikleri yaptıktan bu komutları çalıştır:
+flutter clean
+flutter pub get
+flutter build apk
+
+https://claude.ai/chat/349a52a5-987d-43e3-8749-e61da9fb6167
