@@ -12,32 +12,58 @@ import 'package:myapp/utils/app_localizations.dart';
 List<CameraDescription> cameras = [];
 
 Future<void> main() async {
-  // Ensure that plugin services are initialized so that `availableCameras()`
-  // can be called before `runApp`
-  WidgetsFlutterBinding.ensureInitialized();
-
-  // Ensure portrait mode only
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
-
   try {
-    cameras = await availableCameras();
-  } on CameraException catch (e) {
-    print('Error in fetching cameras: ${e.code}: ${e.description}');
-  }
+    // Ensure that plugin services are initialized so that `availableCameras()`
+    // can be called before `runApp`
+    WidgetsFlutterBinding.ensureInitialized();
 
-  runApp(
-    MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => LanguageProvider()),
-        ChangeNotifierProvider(create: (_) => ThemeProvider()),
-        ChangeNotifierProvider(create: (_) => DetectionSettingsProvider()),
-      ],
-      child: const MyApp(),
-    ),
-  );
+    // Ensure portrait mode only
+    await SystemChrome.setPreferredOrientations([
+      DeviceOrientation.portraitUp,
+      DeviceOrientation.portraitDown,
+    ]);
+
+    try {
+      cameras = await availableCameras();
+      print('Found ${cameras.length} cameras');
+    } on CameraException catch (e) {
+      print('Error in fetching cameras: ${e.code}: ${e.description}');
+      // Allow app to continue without cameras
+      cameras = [];
+    } catch (e) {
+      print('Unexpected error with cameras: $e');
+      // Allow app to continue without cameras
+      cameras = [];
+    }
+
+    runApp(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider(create: (_) => LanguageProvider()),
+          ChangeNotifierProvider(create: (_) => ThemeProvider()),
+          ChangeNotifierProvider(create: (_) => DetectionSettingsProvider()),
+        ],
+        child: const MyApp(),
+      ),
+    );
+  } catch (e) {
+    print('Fatal error in app initialization: $e');
+    // Show error screen instead of crashing
+    runApp(MaterialApp(
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(20.0),
+            child: Text(
+              'Uygulama başlatılırken bir hata oluştu.\nLütfen tekrar deneyin veya uygulama geliştiricisiyle iletişime geçin.\nHata: $e',
+              style: const TextStyle(fontSize: 16),
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ),
+    ));
+  }
 }
 
 class MyApp extends StatelessWidget {
@@ -49,7 +75,7 @@ class MyApp extends StatelessWidget {
     final themeProvider = Provider.of<ThemeProvider>(context);
 
     return MaterialApp(
-      title: 'YoloCanli',
+      title: 'yolocanli',
       theme: themeProvider.getThemeData(),
       locale: languageProvider.currentLocale,
       home: const SplashScreen(),

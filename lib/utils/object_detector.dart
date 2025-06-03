@@ -4,7 +4,6 @@ import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart'
     hide InputImageRotation;
 import 'package:myapp/utils/bounding_box_painter.dart';
 import 'package:myapp/utils/detection_settings_provider.dart';
-import 'package:provider/provider.dart';
 
 class ObjectDetector {
   ObjectDetector._();
@@ -41,17 +40,29 @@ class ObjectDetector {
 
     _confidenceThreshold = threshold;
 
-    await _imageLabeler?.close();
-    final options =
-        ImageLabelerOptions(confidenceThreshold: _confidenceThreshold);
-    _imageLabeler = ImageLabeler(options: options);
+    try {
+      await _imageLabeler?.close();
+      final options =
+          ImageLabelerOptions(confidenceThreshold: _confidenceThreshold);
+      _imageLabeler = ImageLabeler(options: options);
+    } catch (e) {
+      print('Error updating confidence threshold: $e');
+      // Fallback to base image labeler
+      _imageLabeler = ImageLabeler(options: ImageLabelerOptions());
+    }
   }
 
   Future<void> _initialize() async {
     // Initialize image labeler with default confidence threshold
-    final options =
-        ImageLabelerOptions(confidenceThreshold: _confidenceThreshold);
-    _imageLabeler = ImageLabeler(options: options);
+    try {
+      final options =
+          ImageLabelerOptions(confidenceThreshold: _confidenceThreshold);
+      _imageLabeler = ImageLabeler(options: options);
+    } catch (e) {
+      print('Error initializing ImageLabeler: $e');
+      // Fallback to base image labeler
+      _imageLabeler = ImageLabeler(options: ImageLabelerOptions());
+    }
   }
 
   Future<List<DetectedObject>> processImage(InputImage inputImage) async {
@@ -120,6 +131,10 @@ class ObjectDetector {
     if (_imageLabeler == null || _isClosed) return;
 
     _isClosed = true;
-    await _imageLabeler!.close();
+    try {
+      await _imageLabeler!.close();
+    } catch (e) {
+      print('Error closing image labeler: $e');
+    }
   }
 }

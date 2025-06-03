@@ -19,6 +19,11 @@ flutter build apk --release --target-platform=android-arm64
 
 ----------------------------------------------
 
+uygulamadaki aşağıdaki ilgili tüm alanalrı aşağıdaki gibi değiştirmeni istiyorum
+uygulamanın paket adı > com.murselnet.yolocanli
+uygulamanın adı > yolocanli
+
+
 Aşağıdaki değişklikleri yap.
 
 android/app/build.gradle dosyasında com.example.myapp
