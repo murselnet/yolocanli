@@ -4,7 +4,7 @@ import 'package:myapp/utils/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 class LanguageSelector extends StatelessWidget {
-  const LanguageSelector({Key? key}) : super(key: key);
+  const LanguageSelector({super.key});
 
   @override
   Widget build(BuildContext context) {

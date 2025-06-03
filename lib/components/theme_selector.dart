@@ -4,7 +4,7 @@ import 'package:myapp/utils/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 class ThemeSelector extends StatelessWidget {
-  const ThemeSelector({Key? key}) : super(key: key);
+  const ThemeSelector({super.key});
 
   @override
   Widget build(BuildContext context) {

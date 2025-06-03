@@ -1,8 +1,5 @@
-import 'dart:io';
 import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
-import 'package:camera/camera.dart';
 import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart'
     hide InputImageRotation;
 import 'package:myapp/utils/bounding_box_painter.dart';

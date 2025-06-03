@@ -36,7 +36,7 @@ class DetectionResult {
 }
 
 class ObjectDetectionScreen extends StatefulWidget {
-  const ObjectDetectionScreen({Key? key}) : super(key: key);
+  const ObjectDetectionScreen({super.key});
 
   @override
   _ObjectDetectionScreenState createState() => _ObjectDetectionScreenState();
@@ -598,7 +598,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                           ],
                         ),
                       );
-                    }).toList(),
+                    }),
                   ],
                 ),
               ),
@@ -843,7 +843,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                             ],
                           ),
                         );
-                      }).toList(),
+                      }),
                     ],
                   ),
                 ),

@@ -4,7 +4,7 @@ import 'package:myapp/components/language_selector.dart';
 import 'package:myapp/components/theme_selector.dart';
 
 class SettingsDialog extends StatelessWidget {
-  const SettingsDialog({Key? key}) : super(key: key);
+  const SettingsDialog({super.key});
 
   @override
   Widget build(BuildContext context) {

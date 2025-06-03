@@ -6,7 +6,7 @@ import 'package:myapp/utils/my_text_style.dart'; // Import MyTextStyle
 import 'package:myapp/utils/app_localizations.dart';
 
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({Key? key}) : super(key: key);
+  const SplashScreen({super.key});
 
   @override
   _SplashScreenState createState() => _SplashScreenState();
