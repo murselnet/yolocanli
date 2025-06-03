@@ -4,6 +4,7 @@ import 'package:camera/camera.dart';
 import 'package:myapp/screen/splash_screen.dart';
 import 'package:myapp/utils/language_provider.dart';
 import 'package:myapp/utils/theme_provider.dart';
+import 'package:myapp/utils/detection_settings_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:myapp/utils/app_localizations.dart';
@@ -32,6 +33,7 @@ Future<void> main() async {
       providers: [
         ChangeNotifierProvider(create: (_) => LanguageProvider()),
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
+        ChangeNotifierProvider(create: (_) => DetectionSettingsProvider()),
       ],
       child: const MyApp(),
     ),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:myapp/utils/app_localizations.dart';
 import 'package:myapp/components/language_selector.dart';
 import 'package:myapp/components/theme_selector.dart';
+import 'package:myapp/components/detection_settings.dart';
 
 class SettingsDialog extends StatelessWidget {
   const SettingsDialog({super.key});
@@ -25,6 +26,8 @@ class SettingsDialog extends StatelessWidget {
             LanguageSelector(),
             Divider(),
             ThemeSelector(),
+            Divider(),
+            DetectionSettings(),
           ],
         ),
       ),

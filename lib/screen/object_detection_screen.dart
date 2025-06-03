@@ -10,6 +10,8 @@ import 'package:myapp/utils/app_localizations.dart';
 import 'package:myapp/utils/bounding_box_painter.dart';
 import 'package:myapp/utils/object_detector.dart';
 import 'package:myapp/components/settings_dialog.dart';
+import 'package:myapp/utils/detection_settings_provider.dart';
+import 'package:provider/provider.dart';
 
 class DetectionResult {
   final List<ImageLabel> labels;
@@ -47,9 +49,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
   List<DetectedObject> _detectedObjects = [];
   String? _error;
   Timer? _timer;
-  double _confidenceThreshold = 0.6;
   bool _flashEnabled = false;
-  ResolutionPreset _currentResolution = ResolutionPreset.medium;
   final List<DetectionResult> _detectionHistory = [];
   bool _isPaused = false;
   String? _capturedImagePath;
@@ -96,14 +96,19 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
   }
 
   Future<void> _initializeLabeler() async {
+    final settings =
+        Provider.of<DetectionSettingsProvider>(context, listen: false);
     final options =
-        ImageLabelerOptions(confidenceThreshold: _confidenceThreshold);
+        ImageLabelerOptions(confidenceThreshold: settings.confidenceThreshold);
     _imageLabeler = ImageLabeler(options: options);
   }
 
   Future<void> _initializeObjectDetector() async {
     try {
+      final settings =
+          Provider.of<DetectionSettingsProvider>(context, listen: false);
       _objectDetector = await ObjectDetector.getInstance();
+      _objectDetector!.updateSettingsProvider(settings);
     } catch (e) {
       print('Error initializing object detector: $e');
       if (mounted) {
@@ -167,9 +172,12 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
         return;
       }
 
+      final settings =
+          Provider.of<DetectionSettingsProvider>(context, listen: false);
+
       _cameraController = CameraController(
         rearCamera,
-        _currentResolution,
+        settings.cameraResolution,
         enableAudio: false,
         imageFormatGroup: ImageFormatGroup.jpeg,
       );
@@ -218,13 +226,16 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
   }
 
   Future<void> _updateCameraResolution(ResolutionPreset newResolution) async {
-    if (_currentResolution == newResolution) return;
+    final settings =
+        Provider.of<DetectionSettingsProvider>(context, listen: false);
+    if (settings.cameraResolution == newResolution) return;
+
+    await settings.setCameraResolution(newResolution);
 
     _timer?.cancel();
     await _cameraController?.dispose();
 
     setState(() {
-      _currentResolution = newResolution;
       _isCameraInitialized = false;
     });
 
@@ -262,16 +273,16 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
   }
 
   Future<void> _updateConfidenceThreshold(double newThreshold) async {
-    if (_confidenceThreshold == newThreshold) return;
+    final settings =
+        Provider.of<DetectionSettingsProvider>(context, listen: false);
+    if (settings.confidenceThreshold == newThreshold) return;
 
-    setState(() {
-      _confidenceThreshold = newThreshold;
-    });
+    await settings.setConfidenceThreshold(newThreshold);
 
     await _imageLabeler?.close();
 
     final options =
-        ImageLabelerOptions(confidenceThreshold: _confidenceThreshold);
+        ImageLabelerOptions(confidenceThreshold: settings.confidenceThreshold);
     _imageLabeler = ImageLabeler(options: options);
   }
 
@@ -614,6 +625,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
   @override
   Widget build(BuildContext context) {
     final appLocalizations = AppLocalizations.of(context);
+    final detectionSettings = Provider.of<DetectionSettingsProvider>(context);
 
     if (_error != null) {
       return Scaffold(
@@ -798,7 +810,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                                 .copyWith(color: Colors.white),
                           ),
                           Text(
-                            '${appLocalizations.confidence}: ${(_confidenceThreshold * 100).toInt()}%',
+                            '${appLocalizations.confidence}: ${(detectionSettings.confidenceThreshold * 100).toInt()}%',
                             style: MyTextStyle.size12
                                 .copyWith(color: Colors.white70),
                           ),
