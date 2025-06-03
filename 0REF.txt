@@ -2,3 +2,15 @@ yolocanli
 flutter build apk --release
 cd build/app/outputs/flutter-apk/
 npx serve . -p 8000
+
+
+
+
+
+
+
+
+Daha küçük bir APK oluşturmak için, 
+sadece belirli bir mimariye odaklanabilirsiniz:
+
+flutter build apk --release --target-platform=android-arm64

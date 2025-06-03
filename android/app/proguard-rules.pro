@@ -34,3 +34,6 @@
 -dontusemixedcaseclassnames
 -dontskipnonpubliclibraryclasses
 -verbose 
+
+# Add rules for Google Play Core library
+-keep class com.google.android.play.core.** { *; }

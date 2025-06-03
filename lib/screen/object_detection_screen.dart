@@ -711,7 +711,7 @@ class _ObjectDetectionScreenState extends State<ObjectDetectionScreen>
                 absoluteImageSize: _imageSize!,
                 rotation: _imageRotation!,
               ),
-              child: SizedBox(
+              child: const SizedBox(
                 width: double.infinity,
                 height: double.infinity,
               ),
