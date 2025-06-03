@@ -3,19 +3,13 @@ import 'package:camera/camera.dart';
 import 'package:google_mlkit_image_labeling/google_mlkit_image_labeling.dart'
     hide InputImageRotation;
 import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as path_lib;
 import 'dart:io';
 import 'dart:async';
-import 'dart:typed_data';
-import 'package:flutter/services.dart';
 import 'package:myapp/utils/my_text_style.dart';
 import 'package:myapp/utils/app_localizations.dart';
 import 'package:myapp/utils/bounding_box_painter.dart';
 import 'package:myapp/utils/object_detector.dart';
 import 'package:myapp/components/settings_dialog.dart';
-import 'package:provider/provider.dart';
-import 'package:myapp/utils/language_provider.dart';
-import 'package:myapp/utils/theme_provider.dart';
 
 class DetectionResult {
   final List<ImageLabel> labels;
