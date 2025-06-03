@@ -11,6 +11,9 @@
 -keep class com.google.android.gms.** { *; }
 -keep class androidx.camera.** { *; }
 
+# Google Play Core için kurallar
+-keep class com.google.android.play.core.** { *; }
+
 # Diğer kullanılan kütüphaneler için kurallar
 -keep class androidx.core.app.CoreComponentFactory { *; }
 -keep class androidx.multidex.** { *; }
